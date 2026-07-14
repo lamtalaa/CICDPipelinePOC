@@ -135,6 +135,9 @@ struct ContentView: View {
 
             Text("GitHub Actions + Fastlane")
                 .font(.title2.bold())
+            
+            Text("Automated through GitHub Actions and Fastlane")
+                .font(.subheadline)
 
             Text(
                 "An end-to-end iOS pipeline that tests, signs, builds, and uploads the application to TestFlight."

@@ -5,8 +5,8 @@
 //  Created by Yann Lamtalaa on 7/14/26.
 //
 
-import XCTest
 @testable import CICDPipelinePOC
+import XCTest
 
 final class CICDPipelinePOCTests: XCTestCase {
     func testPipelineContainsEveryMajorStage() {

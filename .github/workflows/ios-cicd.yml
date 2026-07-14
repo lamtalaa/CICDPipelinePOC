@@ -2,180 +2,237 @@ name: iOS CI/CD
 
 on:
   pull_request:
-    branches:
-      - main
-
+    branches: [main]
   push:
-    branches:
-      - main
-
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: ios-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
   LANG: en_US.UTF-8
   LC_ALL: en_US.UTF-8
+  COVERAGE_THRESHOLD: ${{ vars.COVERAGE_THRESHOLD || '70' }}
 
 jobs:
-  test:
-    name: Build and Test
+  quality:
+    name: Lint, Test, and Coverage
     runs-on: macos-26
-    timeout-minutes: 20
+    timeout-minutes: 25
+    outputs:
+      tests: ${{ steps.metrics.outputs.tests }}
+      failures: ${{ steps.metrics.outputs.failures }}
+      coverage: ${{ steps.metrics.outputs.coverage }}
+      lint_violations: ${{ steps.metrics.outputs.lint_violations }}
+      quality_status: ${{ steps.metrics.outputs.quality_status }}
+      app_version: ${{ steps.metadata.outputs.app_version }}
+      build_number: ${{ steps.metadata.outputs.build_number }}
+      branch: ${{ steps.metadata.outputs.branch }}
+      commit: ${{ steps.metadata.outputs.commit }}
+      author: ${{ steps.metadata.outputs.author }}
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
-      - name: Display Xcode version
-        run: |
-          xcodebuild -version
-          swift --version
-
-      - name: Configure Ruby and Fastlane
-        uses: ruby/setup-ruby@v1
+      - uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.3"
           bundler-cache: true
 
+      - name: Install SwiftLint
+        run: brew install swiftlint
+
       - name: Prepare build metadata
+        id: metadata
         shell: bash
         run: |
           BRANCH_NAME="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
           SHORT_SHA="${GITHUB_SHA:0:7}"
           BUILD_DATE="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-          RUN_NUMBER="${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          BUILD_NUMBER="${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          AUTHOR="$(git log -1 --pretty=format:'%an')"
+          XCODE_VERSION="$(xcodebuild -version | head -1 | awk '{print $2}')"
+          APP_VERSION="$(xcodebuild -project CICDPipelinePOC.xcodeproj -scheme CICDPipelinePOC -showBuildSettings 2>/dev/null | awk '/MARKETING_VERSION/ {print $3; exit}')"
 
           echo "CI_COMMIT_SHA=$SHORT_SHA" >> "$GITHUB_ENV"
           echo "CI_BRANCH=$BRANCH_NAME" >> "$GITHUB_ENV"
           echo "CI_WORKFLOW=$GITHUB_WORKFLOW" >> "$GITHUB_ENV"
-          echo "CI_RUN_NUMBER=$RUN_NUMBER" >> "$GITHUB_ENV"
+          echo "CI_RUN_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
+          echo "CI_BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
           echo "CI_BUILD_DATE=$BUILD_DATE" >> "$GITHUB_ENV"
           echo "CI_ENVIRONMENT=GitHub Actions CI" >> "$GITHUB_ENV"
+          echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
+          echo "XCODE_VERSION=$XCODE_VERSION" >> "$GITHUB_ENV"
+          echo "COMMIT_AUTHOR=$AUTHOR" >> "$GITHUB_ENV"
 
-      - name: Display CI metadata
+          echo "branch=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
+          echo "commit=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "author=$AUTHOR" >> "$GITHUB_OUTPUT"
+
+      - name: Run SwiftLint
+        id: lint
+        continue-on-error: true
+        shell: bash
         run: |
-          echo "Commit:      $CI_COMMIT_SHA"
-          echo "Branch:      $CI_BRANCH"
-          echo "Workflow:    $CI_WORKFLOW"
-          echo "Run:         $CI_RUN_NUMBER"
-          echo "Build date:  $CI_BUILD_DATE"
-          echo "Environment: $CI_ENVIRONMENT"
+          mkdir -p ci-results
+          swiftlint lint --strict --reporter json > ci-results/swiftlint.json
 
       - name: Run Fastlane unit tests
+        id: tests
+        continue-on-error: true
         run: bundle exec fastlane ios test
 
-      - name: Upload test reports
+      - name: Collect quality metrics
+        id: metrics
+        if: always()
+        env:
+          LINT_STEP_OUTCOME: ${{ steps.lint.outcome }}
+          TEST_STEP_OUTCOME: ${{ steps.tests.outcome }}
+          COVERAGE_TARGET: CICDPipelinePOC
+        run: python3 scripts/ci/collect_metrics.py
+
+      - name: Publish workflow summary
+        if: always()
+        run: cat ci-results/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload quality artifacts
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: ios-test-reports-${{ github.run_number }}-${{ github.run_attempt }}
-          path: fastlane/test_output
-          if-no-files-found: ignore
-          retention-days: 7
+          name: ios-quality-reports-${{ github.run_number }}-${{ github.run_attempt }}
+          path: |
+            fastlane/test_output
+            ci-results
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Update PR quality comment
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          SUMMARY_PATH: ci-results/summary.md
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- ios-cicd-quality-report -->';
+            const summary = fs.existsSync(process.env.SUMMARY_PATH)
+              ? fs.readFileSync(process.env.SUMMARY_PATH, 'utf8')
+              : '## ❌ iOS CI Quality Report\n\nReport generation failed.';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = `${marker}\n${summary}\n[Open workflow run](${runUrl})`;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              per_page: 100
+            });
+            const existing = comments.find(c => c.user.type === 'Bot' && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body
+              });
+            }
+
+      - name: Notify Teams about PR validation
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          PIPELINE_STATUS: ${{ steps.metrics.outputs.quality_status }}
+          TESTS: ${{ steps.metrics.outputs.tests }}
+          FAILURES: ${{ steps.metrics.outputs.failures }}
+          COVERAGE: ${{ steps.metrics.outputs.coverage }}
+          LINT_VIOLATIONS: ${{ steps.metrics.outputs.lint_violations }}
+          TESTFLIGHT_STATUS: Not applicable
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 scripts/ci/notify_teams.py
+
+      - name: Enforce quality gate
+        if: always()
+        run: test "${{ steps.metrics.outputs.quality_status }}" = "passed"
 
   deploy:
-    name: Upload to TestFlight
-    needs: test
-
-    if: >
-      github.ref == 'refs/heads/main' &&
-      github.event_name != 'pull_request'
-
+    name: Upload to QA TestFlight
+    needs: quality
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 35
+    environment:
+      name: qa-testflight
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
-      - name: Display Xcode version
-        run: |
-          xcodebuild -version
-          swift --version
-
-      - name: Configure Ruby and Fastlane
-        uses: ruby/setup-ruby@v1
+      - uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.3"
           bundler-cache: true
 
-      - name: Prepare build metadata
+      - name: Prepare deployment metadata
         shell: bash
         run: |
-          SHORT_SHA="${GITHUB_SHA:0:7}"
-          BUILD_DATE="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-          RUN_NUMBER="${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
-
-          echo "CI_COMMIT_SHA=$SHORT_SHA" >> "$GITHUB_ENV"
-          echo "CI_BRANCH=$GITHUB_REF_NAME" >> "$GITHUB_ENV"
+          echo "CI_COMMIT_SHA=${{ needs.quality.outputs.commit }}" >> "$GITHUB_ENV"
+          echo "CI_BRANCH=${{ needs.quality.outputs.branch }}" >> "$GITHUB_ENV"
           echo "CI_WORKFLOW=$GITHUB_WORKFLOW" >> "$GITHUB_ENV"
-          echo "CI_RUN_NUMBER=$RUN_NUMBER" >> "$GITHUB_ENV"
-          echo "CI_BUILD_NUMBER=$RUN_NUMBER" >> "$GITHUB_ENV"
-          echo "CI_BUILD_DATE=$BUILD_DATE" >> "$GITHUB_ENV"
-          echo "CI_ENVIRONMENT=TestFlight" >> "$GITHUB_ENV"
+          echo "CI_RUN_NUMBER=${{ needs.quality.outputs.build_number }}" >> "$GITHUB_ENV"
+          echo "CI_BUILD_NUMBER=${{ needs.quality.outputs.build_number }}" >> "$GITHUB_ENV"
+          echo "CI_BUILD_DATE=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
+          echo "CI_ENVIRONMENT=QA TestFlight" >> "$GITHUB_ENV"
+          echo "APP_VERSION=${{ needs.quality.outputs.app_version }}" >> "$GITHUB_ENV"
+          echo "COMMIT_AUTHOR=${{ needs.quality.outputs.author }}" >> "$GITHUB_ENV"
+          echo "RELEASE_NOTES_PATH=build/release_notes.txt" >> "$GITHUB_ENV"
 
-      - name: Display deployment metadata
-        run: |
-          echo "Commit:       $CI_COMMIT_SHA"
-          echo "Branch:       $CI_BRANCH"
-          echo "Workflow:     $CI_WORKFLOW"
-          echo "Run:          $CI_RUN_NUMBER"
-          echo "Build number: $CI_BUILD_NUMBER"
-          echo "Build date:   $CI_BUILD_DATE"
-          echo "Environment:  $CI_ENVIRONMENT"
+      - name: Generate TestFlight release notes
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+          CI_VERSION: ${{ needs.quality.outputs.app_version }}
+        run: python3 scripts/ci/generate_release_notes.py
 
-      - name: Install Apple certificate and provisioning profile
+      - name: Install Apple signing assets
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
           P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
           BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        shell: bash
         run: |
           CERTIFICATE_PATH="$RUNNER_TEMP/build_certificate.p12"
           PROFILE_PATH="$RUNNER_TEMP/build_profile.mobileprovision"
           KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
-
-          echo -n "$BUILD_CERTIFICATE_BASE64" \
-            | base64 --decode -o "$CERTIFICATE_PATH"
-
-          echo -n "$BUILD_PROVISION_PROFILE_BASE64" \
-            | base64 --decode -o "$PROFILE_PATH"
-
-          security create-keychain \
-            -p "$KEYCHAIN_PASSWORD" \
-            "$KEYCHAIN_PATH"
-
-          security set-keychain-settings \
-            -lut 21600 \
-            "$KEYCHAIN_PATH"
-
-          security unlock-keychain \
-            -p "$KEYCHAIN_PASSWORD" \
-            "$KEYCHAIN_PATH"
-
-          security import "$CERTIFICATE_PATH" \
-            -P "$P12_PASSWORD" \
-            -A \
-            -t cert \
-            -f pkcs12 \
-            -k "$KEYCHAIN_PATH"
-
-          security set-key-partition-list \
-            -S apple-tool:,apple: \
-            -k "$KEYCHAIN_PASSWORD" \
-            "$KEYCHAIN_PATH"
-
-          security list-keychain \
-            -d user \
-            -s "$KEYCHAIN_PATH"
-
-          mkdir -p \
-            "$HOME/Library/MobileDevice/Provisioning Profiles"
-
-          cp "$PROFILE_PATH" \
-            "$HOME/Library/MobileDevice/Provisioning Profiles/build_profile.mobileprovision"
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o "$CERTIFICATE_PATH"
+          echo -n "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode -o "$PROFILE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/build_profile.mobileprovision"
 
       - name: Build and upload with Fastlane
         env:
@@ -187,11 +244,44 @@ jobs:
           ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
         run: bundle exec fastlane ios beta
 
-      - name: Upload generated IPA
+      - name: Publish deployment summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## TestFlight Deployment"
+            echo
+            echo "| Item | Value |"
+            echo "|---|---|"
+            echo "| Status | ${{ job.status }} |"
+            echo "| Environment | QA TestFlight |"
+            echo "| Version | ${{ needs.quality.outputs.app_version }} |"
+            echo "| Build | ${{ needs.quality.outputs.build_number }} |"
+            echo "| Branch | ${{ needs.quality.outputs.branch }} |"
+            echo "| Commit | ${{ needs.quality.outputs.commit }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload IPA and release notes
         if: success()
         uses: actions/upload-artifact@v6
         with:
-          name: CICDPipelinePOC-${{ github.run_number }}-${{ github.run_attempt }}
-          path: build/CICDPipelinePOC.ipa
+          name: CICDPipelinePOC-${{ needs.quality.outputs.build_number }}
+          path: |
+            build/CICDPipelinePOC.ipa
+            build/release_notes.txt
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 14
+
+      - name: Notify Teams about TestFlight deployment
+        if: always()
+        continue-on-error: true
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          PIPELINE_STATUS: ${{ job.status }}
+          TESTS: ${{ needs.quality.outputs.tests }}
+          FAILURES: ${{ needs.quality.outputs.failures }}
+          COVERAGE: ${{ needs.quality.outputs.coverage }}
+          LINT_VIOLATIONS: ${{ needs.quality.outputs.lint_violations }}
+          TESTFLIGHT_STATUS: ${{ job.status == 'success' && 'Uploaded' || 'Failed' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 scripts/ci/notify_teams.py

@@ -4,6 +4,9 @@ fastlane/Preview.html
 fastlane/test_output/
 fastlane/screenshots/
 
+# CI reports
+ci-results/
+
 # Build artifacts
 build/
 *.ipa

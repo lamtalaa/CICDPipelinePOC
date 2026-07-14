@@ -1,12 +1,13 @@
-# This file contains the fastlane.tools configuration
-
 require "shellwords"
 
+fastlane_version "2.228.0"
 default_platform(:ios)
 
 PROJECT = "CICDPipelinePOC.xcodeproj"
-SCHEME = "CICDPipelinePOC"
+APP_SCHEME = "CICDPipelinePOC"
+CI_TEST_SCHEME = "CICDPipelinePOCCI"
 UNIT_TEST_TARGET = "CICDPipelinePOCTests"
+
 
 def ci_metadata_xcargs
   values = {
@@ -15,35 +16,26 @@ def ci_metadata_xcargs
     "CI_WORKFLOW" => ENV.fetch("CI_WORKFLOW", "Xcode"),
     "CI_RUN_NUMBER" => ENV.fetch("CI_RUN_NUMBER", "local"),
     "CI_BUILD_DATE" => ENV.fetch("CI_BUILD_DATE", "local"),
-    "CI_ENVIRONMENT" => ENV.fetch(
-      "CI_ENVIRONMENT",
-      "Local Development"
-    )
+    "CI_ENVIRONMENT" => ENV.fetch("CI_ENVIRONMENT", "Local Development")
   }
 
-  values.map do |key, value|
-    "#{key}=#{Shellwords.escape(value)}"
-  end.join(" ")
+  values.map { |key, value| "#{key}=#{Shellwords.escape(value)}" }.join(" ")
 end
 
 platform :ios do
-
-  desc "Build the app and run unit tests"
+  desc "Run unit tests only with code coverage"
   lane :test do
     run_tests(
       project: PROJECT,
-      scheme: SCHEME,
+      scheme: CI_TEST_SCHEME,
       devices: ["iPhone 17"],
       clean: true,
-
-      # Run unit tests only.
-      # This excludes the UI test target, which can be slow
-      # or unreliable on GitHub-hosted simulators.
       only_testing: [UNIT_TEST_TARGET],
-
+      code_coverage: true,
+      result_bundle: true,
       output_directory: "fastlane/test_output",
       output_types: "junit,html",
-
+      output_files: "junit.xml,report.html",
       xcargs: ci_metadata_xcargs
     )
   end
@@ -54,6 +46,12 @@ platform :ios do
     team_id = ENV.fetch("APPLE_TEAM_ID")
     profile_name = ENV.fetch("PROVISIONING_PROFILE_NAME")
     build_number = ENV.fetch("CI_BUILD_NUMBER")
+    release_notes_path = ENV.fetch("RELEASE_NOTES_PATH", "build/release_notes.txt")
+    changelog = if File.exist?(release_notes_path)
+                  File.read(release_notes_path)
+                else
+                  "Automated GitHub Actions build #{build_number}"
+                end
 
     api_key = app_store_connect_api_key(
       key_id: ENV.fetch("ASC_KEY_ID"),
@@ -77,35 +75,24 @@ platform :ios do
 
     build_app(
       project: PROJECT,
-      scheme: SCHEME,
+      scheme: APP_SCHEME,
       configuration: "Release",
       clean: true,
       export_method: "app-store",
-
       export_options: {
         signingStyle: "manual",
         teamID: team_id,
-        provisioningProfiles: {
-          app_identifier => profile_name
-        }
+        provisioningProfiles: { app_identifier => profile_name }
       },
-
       xcargs: signing_arguments,
-
       output_directory: "build",
-      output_name: "#{SCHEME}.ipa"
+      output_name: "#{APP_SCHEME}.ipa"
     )
 
     upload_to_testflight(
       api_key: api_key,
-      ipa: "build/#{SCHEME}.ipa",
-
-      changelog: [
-        "GitHub Actions build #{build_number}",
-        "Branch: #{ENV.fetch('CI_BRANCH', 'unknown')}",
-        "Commit: #{ENV.fetch('CI_COMMIT_SHA', 'unknown')}"
-      ].join("\n"),
-
+      ipa: "build/#{APP_SCHEME}.ipa",
+      changelog: changelog,
       distribute_external: false,
       skip_waiting_for_build_processing: true
     )

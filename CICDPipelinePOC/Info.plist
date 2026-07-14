@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CI_BRANCH</key>
+	<string>$(CI_BRANCH)</string>
+	<key>CI_BUILD_DATE</key>
+	<string>$(CI_BUILD_DATE)</string>
+	<key>CI_COMMIT_SHA</key>
+	<string>$(CI_COMMIT_SHA)</string>
+	<key>CI_ENVIRONMENT</key>
+	<string>$(CI_ENVIRONMENT)</string>
+	<key>CI_RUN_NUMBER</key>
+	<string>$(CI_RUN_NUMBER)</string>
+	<key>CI_WORKFLOW</key>
+	<string>$(CI_WORKFLOW)</string>
+</dict>
+</plist>

@@ -6,6 +6,7 @@ default_platform(:ios)
 PROJECT = "CICDPipelinePOC.xcodeproj"
 SCHEME = "CICDPipelinePOC"
 UNIT_TEST_TARGET = "CICDPipelinePOCTests"
+UI_TEST_TARGET = "CICDPipelinePOCUITests"
 
 
 def ci_metadata_xcargs
@@ -22,7 +23,7 @@ def ci_metadata_xcargs
 end
 
 platform :ios do
-  desc "Run unit tests with code coverage"
+  desc "Run unit tests only with code coverage"
   lane :test do
     run_tests(
       project: PROJECT,
@@ -30,6 +31,7 @@ platform :ios do
       devices: ["iPhone 17"],
       clean: true,
       only_testing: [UNIT_TEST_TARGET],
+      skip_testing: [UI_TEST_TARGET],
       code_coverage: true,
       result_bundle: true,
       output_directory: "fastlane/test_output",

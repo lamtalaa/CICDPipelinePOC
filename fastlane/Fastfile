@@ -4,9 +4,9 @@ fastlane_version "2.228.0"
 default_platform(:ios)
 
 PROJECT = "CICDPipelinePOC.xcodeproj"
-SCHEME = "CICDPipelinePOC"
+APP_SCHEME = "CICDPipelinePOC"
+CI_TEST_SCHEME = "CICDPipelinePOCCI"
 UNIT_TEST_TARGET = "CICDPipelinePOCTests"
-UI_TEST_TARGET = "CICDPipelinePOCUITests"
 
 
 def ci_metadata_xcargs
@@ -27,11 +27,10 @@ platform :ios do
   lane :test do
     run_tests(
       project: PROJECT,
-      scheme: SCHEME,
+      scheme: CI_TEST_SCHEME,
       devices: ["iPhone 17"],
       clean: true,
       only_testing: [UNIT_TEST_TARGET],
-      skip_testing: [UI_TEST_TARGET],
       code_coverage: true,
       result_bundle: true,
       output_directory: "fastlane/test_output",
@@ -75,7 +74,7 @@ platform :ios do
 
     build_app(
       project: PROJECT,
-      scheme: SCHEME,
+      scheme: APP_SCHEME,
       configuration: "Release",
       clean: true,
       export_method: "app-store",
@@ -86,12 +85,12 @@ platform :ios do
       },
       xcargs: signing_arguments,
       output_directory: "build",
-      output_name: "#{SCHEME}.ipa"
+      output_name: "#{APP_SCHEME}.ipa"
     )
 
     upload_to_testflight(
       api_key: api_key,
-      ipa: "build/#{SCHEME}.ipa",
+      ipa: "build/#{APP_SCHEME}.ipa",
       changelog: changelog,
       distribute_external: false,
       skip_waiting_for_build_processing: true

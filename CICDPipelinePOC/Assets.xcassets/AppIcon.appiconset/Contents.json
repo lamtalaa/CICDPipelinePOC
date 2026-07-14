@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "ChatGPT Image Jul 14, 2026, 09_43_04 AM.png",
+      "filename" : "CICDPipelinePOC_AppIcon.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -13,7 +13,7 @@
           "value" : "dark"
         }
       ],
-      "filename" : "ChatGPT Image Jul 14, 2026, 09_43_04 AM 1.png",
+      "filename" : "CICDPipelinePOC_AppIcon 1.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -25,7 +25,7 @@
           "value" : "tinted"
         }
       ],
-      "filename" : "ChatGPT Image Jul 14, 2026, 09_43_04 AM 2.png",
+      "filename" : "CICDPipelinePOC_AppIcon 2.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"

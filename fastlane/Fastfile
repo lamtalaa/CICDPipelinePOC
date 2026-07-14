@@ -35,6 +35,7 @@ platform :ios do
       result_bundle: true,
       output_directory: "fastlane/test_output",
       output_types: "junit,html",
+      output_files: "junit.xml,report.html",
       xcargs: ci_metadata_xcargs
     )
   end

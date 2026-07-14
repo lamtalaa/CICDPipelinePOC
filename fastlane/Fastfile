@@ -1,0 +1,112 @@
+# This file contains the fastlane.tools configuration
+# You can find the documentation at https://docs.fastlane.tools
+#
+# For a list of all available actions, check out
+#
+#     https://docs.fastlane.tools/actions
+#
+# For a list of all available plugins, check out
+#
+#     https://docs.fastlane.tools/plugins/available-plugins
+#
+
+# Uncomment the line if you want fastlane to automatically update itself
+# update_fastlane
+
+require "shellwords"
+
+default_platform(:ios)
+
+PROJECT = "CICDPipelinePOC.xcodeproj"
+SCHEME = "CICDPipelinePOC"
+
+def ci_metadata_xcargs
+  values = {
+    "CI_COMMIT_SHA" => ENV.fetch("CI_COMMIT_SHA", "local"),
+    "CI_BRANCH" => ENV.fetch("CI_BRANCH", "local"),
+    "CI_WORKFLOW" => ENV.fetch("CI_WORKFLOW", "Xcode"),
+    "CI_RUN_NUMBER" => ENV.fetch("CI_RUN_NUMBER", "local"),
+    "CI_BUILD_DATE" => ENV.fetch("CI_BUILD_DATE", "local"),
+    "CI_ENVIRONMENT" => ENV.fetch(
+      "CI_ENVIRONMENT",
+      "Local Development"
+    )
+  }
+
+  values.map do |key, value|
+    "#{key}=#{Shellwords.escape(value)}"
+  end.join(" ")
+end
+
+platform :ios do
+  desc "Build the app and run unit tests"
+  lane :test do
+    run_tests(
+      project: PROJECT,
+      scheme: SCHEME,
+      devices: ["iPhone 17"],
+      clean: true,
+      output_directory: "fastlane/test_output",
+      output_types: "junit,html",
+      xcargs: ci_metadata_xcargs
+    )
+  end
+
+  desc "Build, sign, and upload the app to TestFlight"
+  lane :beta do
+    app_identifier = ENV.fetch("APP_IDENTIFIER")
+    team_id = ENV.fetch("APPLE_TEAM_ID")
+    profile_name = ENV.fetch("PROVISIONING_PROFILE_NAME")
+    build_number = ENV.fetch("CI_BUILD_NUMBER")
+
+    api_key = app_store_connect_api_key(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key_content: ENV.fetch("ASC_KEY_CONTENT"),
+      is_key_content_base64: true
+    )
+
+    increment_build_number(
+      xcodeproj: PROJECT,
+      build_number: build_number
+    )
+
+    signing_arguments = [
+      ci_metadata_xcargs,
+      "CODE_SIGN_STYLE=Manual",
+      "DEVELOPMENT_TEAM=#{Shellwords.escape(team_id)}",
+      "PROVISIONING_PROFILE_SPECIFIER=#{Shellwords.escape(profile_name)}",
+      "CODE_SIGN_IDENTITY=#{Shellwords.escape('Apple Distribution')}"
+    ].join(" ")
+
+    build_app(
+      project: PROJECT,
+      scheme: SCHEME,
+      configuration: "Release",
+      clean: true,
+      export_method: "app-store",
+      export_options: {
+        signingStyle: "manual",
+        teamID: team_id,
+        provisioningProfiles: {
+          app_identifier => profile_name
+        }
+      },
+      xcargs: signing_arguments,
+      output_directory: "build",
+      output_name: "#{SCHEME}.ipa"
+    )
+
+    upload_to_testflight(
+      api_key: api_key,
+      ipa: "build/#{SCHEME}.ipa",
+      changelog: [
+        "GitHub Actions build #{build_number}",
+        "Branch: #{ENV.fetch('CI_BRANCH', 'unknown')}",
+        "Commit: #{ENV.fetch('CI_COMMIT_SHA', 'unknown')}"
+      ].join("\n"),
+      distribute_external: false,
+      skip_waiting_for_build_processing: true
+    )
+  end
+end

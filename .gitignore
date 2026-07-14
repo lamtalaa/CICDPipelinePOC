@@ -1,0 +1,19 @@
+# Fastlane output
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/test_output/
+fastlane/screenshots/
+
+# Build artifacts
+build/
+*.ipa
+*.xcarchive
+*.dSYM.zip
+
+# Local Bundler installation
+vendor/bundle/
+
+# Apple signing assets
+*.p12
+*.mobileprovision
+AuthKey_*.p8

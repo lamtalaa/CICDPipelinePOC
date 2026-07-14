@@ -1,0 +1,175 @@
+name: iOS CI/CD
+
+on:
+  pull_request:
+    branches:
+      - main
+
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  LANG: en_US.UTF-8
+  LC_ALL: en_US.UTF-8
+
+jobs:
+  test:
+    name: Build and Test
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Display Xcode version
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Configure Ruby and Fastlane
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+
+      - name: Prepare build metadata
+        shell: bash
+        run: |
+          BRANCH_NAME="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          BUILD_DATE="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          RUN_NUMBER="${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+
+          echo "CI_COMMIT_SHA=$SHORT_SHA" >> "$GITHUB_ENV"
+          echo "CI_BRANCH=$BRANCH_NAME" >> "$GITHUB_ENV"
+          echo "CI_WORKFLOW=$GITHUB_WORKFLOW" >> "$GITHUB_ENV"
+          echo "CI_RUN_NUMBER=$RUN_NUMBER" >> "$GITHUB_ENV"
+          echo "CI_BUILD_DATE=$BUILD_DATE" >> "$GITHUB_ENV"
+          echo "CI_ENVIRONMENT=GitHub Actions CI" >> "$GITHUB_ENV"
+
+      - name: Run Fastlane tests
+        run: bundle exec fastlane ios test
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: ios-test-reports
+          path: fastlane/test_output
+          if-no-files-found: ignore
+          retention-days: 7
+
+  deploy:
+    name: Upload to TestFlight
+    needs: test
+
+    if: >
+      github.ref == 'refs/heads/main' &&
+      github.event_name != 'pull_request'
+
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Display Xcode version
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Configure Ruby and Fastlane
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+
+      - name: Prepare build metadata
+        shell: bash
+        run: |
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          BUILD_DATE="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          RUN_NUMBER="${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+
+          echo "CI_COMMIT_SHA=$SHORT_SHA" >> "$GITHUB_ENV"
+          echo "CI_BRANCH=$GITHUB_REF_NAME" >> "$GITHUB_ENV"
+          echo "CI_WORKFLOW=$GITHUB_WORKFLOW" >> "$GITHUB_ENV"
+          echo "CI_RUN_NUMBER=$RUN_NUMBER" >> "$GITHUB_ENV"
+          echo "CI_BUILD_NUMBER=$RUN_NUMBER" >> "$GITHUB_ENV"
+          echo "CI_BUILD_DATE=$BUILD_DATE" >> "$GITHUB_ENV"
+          echo "CI_ENVIRONMENT=TestFlight" >> "$GITHUB_ENV"
+
+      - name: Install Apple certificate and provisioning profile
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          CERTIFICATE_PATH="$RUNNER_TEMP/build_certificate.p12"
+          PROFILE_PATH="$RUNNER_TEMP/build_profile.mobileprovision"
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+
+          echo -n "$BUILD_CERTIFICATE_BASE64" \
+            | base64 --decode -o "$CERTIFICATE_PATH"
+
+          echo -n "$BUILD_PROVISION_PROFILE_BASE64" \
+            | base64 --decode -o "$PROFILE_PATH"
+
+          security create-keychain \
+            -p "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
+
+          security set-keychain-settings \
+            -lut 21600 \
+            "$KEYCHAIN_PATH"
+
+          security unlock-keychain \
+            -p "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
+
+          security import "$CERTIFICATE_PATH" \
+            -P "$P12_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
+
+          security list-keychain \
+            -d user \
+            -s "$KEYCHAIN_PATH"
+
+          mkdir -p \
+            "$HOME/Library/MobileDevice/Provisioning Profiles"
+
+          cp "$PROFILE_PATH" \
+            "$HOME/Library/MobileDevice/Provisioning Profiles/build_profile.mobileprovision"
+
+      - name: Build and upload with Fastlane
+        env:
+          APP_IDENTIFIER: ${{ secrets.APP_IDENTIFIER }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          PROVISIONING_PROFILE_NAME: ${{ secrets.PROVISIONING_PROFILE_NAME }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+        run: bundle exec fastlane ios beta
+
+      - name: Upload generated IPA
+        if: success()
+        uses: actions/upload-artifact@v6
+        with:
+          name: CICDPipelinePOC-${{ github.run_number }}-${{ github.run_attempt }}
+          path: build/CICDPipelinePOC.ipa
+          retention-days: 7

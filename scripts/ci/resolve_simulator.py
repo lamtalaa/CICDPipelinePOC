@@ -13,6 +13,28 @@ from typing import Any
 DEFAULT_DEVICE = "iPhone 16e"
 
 
+def select_configured_xcode() -> bool:
+    developer_dir = os.environ.get("DEVELOPER_DIR", "").strip()
+    if not developer_dir:
+        return True
+
+    result = subprocess.run(
+        ["sudo", "xcode-select", "--switch", developer_dir],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        return True
+
+    message = result.stderr.strip() or result.stdout.strip()
+    print(
+        f"Unable to select Xcode at '{developer_dir}': {message}",
+        file=sys.stderr,
+    )
+    return False
+
+
 def simctl_json(*arguments: str) -> dict[str, Any]:
     try:
         result = subprocess.run(
@@ -127,6 +149,9 @@ def create_simulator(target_device: str, device_type: str) -> str:
 
 
 def main() -> int:
+    if not select_configured_xcode():
+        return 1
+
     target_device = os.environ.get("SIMULATOR_DEVICE", DEFAULT_DEVICE).strip()
     target_device = target_device or DEFAULT_DEVICE
 

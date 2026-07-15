@@ -1,0 +1,96 @@
+name: Repair TestFlight What to Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_version:
+        description: App version shown in TestFlight, for example 1.0
+        required: true
+        type: string
+      build_number:
+        description: Existing TestFlight build number to update
+        required: true
+        type: string
+      release_notes:
+        description: Optional What to Test text; leave empty to generate it from the current main commit
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repair-testflight-notes-${{ inputs.app_version }}-${{ inputs.build_number }}
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    name: Update What to Test
+    runs-on: macos-26
+    timeout-minutes: 40
+    environment:
+      name: qa-testflight
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+
+      - name: Prepare release notes
+        env:
+          INPUT_RELEASE_NOTES: ${{ inputs.release_notes }}
+          GITHUB_TOKEN: ${{ github.token }}
+          CI_VERSION: ${{ inputs.app_version }}
+          CI_BUILD_NUMBER: ${{ inputs.build_number }}
+          CI_BRANCH: ${{ github.ref_name }}
+          CI_COMMIT_SHA: ${{ github.sha }}
+          RELEASE_NOTES_PATH: build/release_notes.txt
+        shell: bash
+        run: |
+          mkdir -p build
+          if [[ -n "${INPUT_RELEASE_NOTES//[[:space:]]/}" ]]; then
+            printf '%s\n' "$INPUT_RELEASE_NOTES" > "$RELEASE_NOTES_PATH"
+          else
+            python3 scripts/ci/generate_release_notes.py
+          fi
+
+          if [[ ! -s "$RELEASE_NOTES_PATH" ]]; then
+            echo "Release notes are empty." >&2
+            exit 1
+          fi
+
+          {
+            echo "## TestFlight What to Test repair"
+            echo
+            echo "- Version: $CI_VERSION"
+            echo "- Build: $CI_BUILD_NUMBER"
+            echo
+            echo '```text'
+            cat "$RELEASE_NOTES_PATH"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Update existing TestFlight build metadata
+        env:
+          APP_IDENTIFIER: ${{ secrets.APP_IDENTIFIER }}
+          APP_VERSION: ${{ inputs.app_version }}
+          CI_BUILD_NUMBER: ${{ inputs.build_number }}
+          RELEASE_NOTES_PATH: build/release_notes.txt
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+        run: bundle exec fastlane ios repair_testflight_notes
+
+      - name: Upload repair evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: testflight-what-to-test-${{ inputs.app_version }}-${{ inputs.build_number }}
+          path: build/release_notes.txt
+          if-no-files-found: error
+          retention-days: 14

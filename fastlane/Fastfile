@@ -24,6 +24,39 @@ def ci_metadata_xcargs
   values.map { |key, value| "#{key}=#{Shellwords.escape(value)}" }.join(" ")
 end
 
+
+def app_store_connect_key
+  app_store_connect_api_key(
+    key_id: ENV.fetch("ASC_KEY_ID"),
+    issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+    key_content: ENV.fetch("ASC_KEY_CONTENT"),
+    is_key_content_base64: true
+  )
+end
+
+
+def testflight_changelog(build_number)
+  release_notes_path = ENV.fetch("RELEASE_NOTES_PATH", "build/release_notes.txt")
+  changelog = if File.exist?(release_notes_path)
+                File.read(release_notes_path, encoding: "UTF-8").strip
+              else
+                "Automated GitHub Actions build #{build_number}"
+              end
+
+  UI.user_error!("TestFlight release notes are empty.") if changelog.empty?
+  changelog
+end
+
+
+def localized_testflight_build_info(changelog)
+  {
+    "default" => {
+      whats_new: changelog
+    }
+  }
+end
+
+
 platform :ios do
   desc "Run unit tests only with code coverage"
   lane :test do
@@ -61,27 +94,19 @@ platform :ios do
     run_tests(**test_options)
   end
 
-  desc "Build, sign, and upload the app to TestFlight"
+  desc "Build, sign, upload, and publish What to Test in TestFlight"
   lane :beta do
     ENV.delete("DEVELOPER_DIR")
 
     app_identifier = ENV.fetch("APP_IDENTIFIER")
+    app_version = ENV.fetch("APP_VERSION")
     team_id = ENV.fetch("APPLE_TEAM_ID")
     profile_name = ENV.fetch("PROVISIONING_PROFILE_NAME")
     build_number = ENV.fetch("CI_BUILD_NUMBER")
-    release_notes_path = ENV.fetch("RELEASE_NOTES_PATH", "build/release_notes.txt")
-    changelog = if File.exist?(release_notes_path)
-                  File.read(release_notes_path)
-                else
-                  "Automated GitHub Actions build #{build_number}"
-                end
+    changelog = testflight_changelog(build_number)
+    api_key = app_store_connect_key
 
-    api_key = app_store_connect_api_key(
-      key_id: ENV.fetch("ASC_KEY_ID"),
-      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
-      key_content: ENV.fetch("ASC_KEY_CONTENT"),
-      is_key_content_base64: true
-    )
+    UI.message("TestFlight What to Test for #{app_version} (#{build_number}):\n#{changelog}")
 
     increment_build_number(
       xcodeproj: PROJECT,
@@ -114,10 +139,55 @@ platform :ios do
 
     upload_to_testflight(
       api_key: api_key,
+      app_identifier: app_identifier,
+      app_version: app_version,
+      build_number: build_number,
       ipa: "build/#{APP_SCHEME}.ipa",
       changelog: changelog,
+      localized_build_info: localized_testflight_build_info(changelog),
       distribute_external: false,
-      skip_waiting_for_build_processing: true
+      notify_external_testers: false,
+      submit_beta_review: false,
+      skip_waiting_for_build_processing: false,
+      wait_processing_interval: 30,
+      wait_processing_timeout_duration: 1800
     )
+
+    UI.success("TestFlight build and What to Test metadata were published.")
+  end
+
+  desc "Repair What to Test metadata for an existing TestFlight build"
+  lane :repair_testflight_notes do
+    app_identifier = ENV.fetch("APP_IDENTIFIER")
+    app_version = ENV.fetch("APP_VERSION")
+    build_number = ENV.fetch("CI_BUILD_NUMBER")
+    changelog = testflight_changelog(build_number)
+
+    UI.message("Repairing TestFlight What to Test for #{app_version} (#{build_number}):\n#{changelog}")
+
+    upload_to_testflight(
+      api_key: app_store_connect_key,
+      app_identifier: app_identifier,
+      app_version: app_version,
+      build_number: build_number,
+      distribute_only: true,
+      changelog: changelog,
+      localized_build_info: localized_testflight_build_info(changelog),
+      distribute_external: false,
+      notify_external_testers: false,
+      submit_beta_review: false,
+      skip_waiting_for_build_processing: false,
+      wait_processing_interval: 30,
+      wait_processing_timeout_duration: 1800
+    )
+
+    UI.success("What to Test metadata was updated for the existing TestFlight build.")
+  end
+
+  error do |lane, _exception|
+    if [:beta, :repair_testflight_notes].include?(lane)
+      UI.error("TestFlight build metadata could not be updated.")
+      UI.error("Confirm that the App Store Connect API key has App Manager or Admin access.")
+    end
   end
 end

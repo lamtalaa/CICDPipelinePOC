@@ -7,6 +7,8 @@ PROJECT = "CICDPipelinePOC.xcodeproj"
 APP_SCHEME = "CICDPipelinePOC"
 CI_TEST_SCHEME = "CICDPipelinePOCCI"
 UNIT_TEST_TARGET = "CICDPipelinePOCTests"
+SIMULATOR_DEVICE = ENV.fetch("SIMULATOR_DEVICE", "iPhone 16e")
+SIMULATOR_OS = ENV.fetch("SIMULATOR_OS", "").strip
 
 
 def ci_metadata_xcargs
@@ -25,23 +27,44 @@ end
 platform :ios do
   desc "Run unit tests only with code coverage"
   lane :test do
-    run_tests(
+    # Use the runner's default Xcode. The workflow may still contain an older
+    # DEVELOPER_DIR value while a PR is being updated, so remove that override.
+    ENV.delete("DEVELOPER_DIR")
+
+    test_device = if SIMULATOR_OS.empty?
+                    SIMULATOR_DEVICE
+                  else
+                    "#{SIMULATOR_DEVICE} (#{SIMULATOR_OS})"
+                  end
+
+    test_options = {
       project: PROJECT,
       scheme: CI_TEST_SCHEME,
-      devices: ["iPhone 17"],
+      devices: [test_device],
+      ensure_devices_found: true,
       clean: true,
       only_testing: [UNIT_TEST_TARGET],
       code_coverage: true,
       result_bundle: true,
       output_directory: "fastlane/test_output",
+      buildlog_path: "fastlane/test_output/buildlogs",
       output_types: "junit,html",
       output_files: "junit.xml,report.html",
       xcargs: ci_metadata_xcargs
-    )
+    }
+
+    unless SIMULATOR_OS.empty?
+      test_options[:sdk] = "iphonesimulator#{SIMULATOR_OS}"
+      test_options[:deployment_target_version] = SIMULATOR_OS
+    end
+
+    run_tests(**test_options)
   end
 
   desc "Build, sign, and upload the app to TestFlight"
   lane :beta do
+    ENV.delete("DEVELOPER_DIR")
+
     app_identifier = ENV.fetch("APP_IDENTIFIER")
     team_id = ENV.fetch("APPLE_TEAM_ID")
     profile_name = ENV.fetch("PROVISIONING_PROFILE_NAME")

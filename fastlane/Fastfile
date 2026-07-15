@@ -184,11 +184,10 @@ platform :ios do
     UI.success("What to Test metadata was updated for the existing TestFlight build.")
   end
 
-  error do |lane, exception|
+  error do |lane, _exception|
     if [:beta, :repair_testflight_notes].include?(lane)
       UI.error("TestFlight build metadata could not be updated.")
       UI.error("Confirm that the App Store Connect API key has App Manager or Admin access.")
     end
-    raise exception
   end
 end

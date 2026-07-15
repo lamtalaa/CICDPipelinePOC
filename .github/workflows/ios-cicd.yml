@@ -20,6 +20,7 @@ env:
   LANG: en_US.UTF-8
   LC_ALL: en_US.UTF-8
   COVERAGE_THRESHOLD: ${{ vars.COVERAGE_THRESHOLD || '70' }}
+  SIMULATOR_DEVICE: iPhone 17
 
 jobs:
   quality:
@@ -37,6 +38,7 @@ jobs:
       branch: ${{ steps.metadata.outputs.branch }}
       commit: ${{ steps.metadata.outputs.commit }}
       author: ${{ steps.metadata.outputs.author }}
+      simulator: ${{ steps.metadata.outputs.simulator }}
 
     steps:
       - uses: actions/checkout@v6
@@ -62,6 +64,13 @@ jobs:
           AUTHOR="$(git log -1 --pretty=format:'%an')"
           XCODE_VERSION="$(xcodebuild -version | head -1 | awk '{print $2}')"
           APP_VERSION="$(xcodebuild -project CICDPipelinePOC.xcodeproj -scheme CICDPipelinePOC -showBuildSettings 2>/dev/null | awk '/MARKETING_VERSION/ {print $3; exit}')"
+          SIMULATOR_OS="$(python3 scripts/ci/resolve_simulator.py)"
+
+          if [[ -n "$SIMULATOR_OS" ]]; then
+            SIMULATOR_DISPLAY="${SIMULATOR_DEVICE} · iOS ${SIMULATOR_OS}"
+          else
+            SIMULATOR_DISPLAY="${SIMULATOR_DEVICE} · iOS runtime unavailable"
+          fi
 
           echo "CI_COMMIT_SHA=$SHORT_SHA" >> "$GITHUB_ENV"
           echo "CI_BRANCH=$BRANCH_NAME" >> "$GITHUB_ENV"
@@ -73,12 +82,15 @@ jobs:
           echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
           echo "XCODE_VERSION=$XCODE_VERSION" >> "$GITHUB_ENV"
           echo "COMMIT_AUTHOR=$AUTHOR" >> "$GITHUB_ENV"
+          echo "SIMULATOR_OS=$SIMULATOR_OS" >> "$GITHUB_ENV"
+          echo "SIMULATOR_DISPLAY=$SIMULATOR_DISPLAY" >> "$GITHUB_ENV"
 
           echo "branch=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
           echo "commit=$SHORT_SHA" >> "$GITHUB_OUTPUT"
           echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
           echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "author=$AUTHOR" >> "$GITHUB_OUTPUT"
+          echo "simulator=$SIMULATOR_DISPLAY" >> "$GITHUB_OUTPUT"
 
       - name: Run SwiftLint
         id: lint
@@ -203,6 +215,7 @@ jobs:
           echo "CI_ENVIRONMENT=QA TestFlight" >> "$GITHUB_ENV"
           echo "APP_VERSION=${{ needs.quality.outputs.app_version }}" >> "$GITHUB_ENV"
           echo "COMMIT_AUTHOR=${{ needs.quality.outputs.author }}" >> "$GITHUB_ENV"
+          echo "SIMULATOR_DISPLAY=${{ needs.quality.outputs.simulator }}" >> "$GITHUB_ENV"
           echo "RELEASE_NOTES_PATH=build/release_notes.txt" >> "$GITHUB_ENV"
 
       - name: Generate TestFlight release notes
@@ -259,6 +272,7 @@ jobs:
             echo "| Build | ${{ needs.quality.outputs.build_number }} |"
             echo "| Branch | ${{ needs.quality.outputs.branch }} |"
             echo "| Commit | ${{ needs.quality.outputs.commit }} |"
+            echo "| Simulator | ${{ needs.quality.outputs.simulator }} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload IPA and release notes

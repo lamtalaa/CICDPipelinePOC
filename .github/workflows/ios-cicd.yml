@@ -20,7 +20,7 @@ env:
   LANG: en_US.UTF-8
   LC_ALL: en_US.UTF-8
   COVERAGE_THRESHOLD: ${{ vars.COVERAGE_THRESHOLD || '70' }}
-  SIMULATOR_DEVICE: iPhone 17
+  SIMULATOR_DEVICE: iPhone 16e
 
 jobs:
   quality:

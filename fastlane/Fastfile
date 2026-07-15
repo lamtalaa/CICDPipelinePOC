@@ -9,6 +9,12 @@ CI_TEST_SCHEME = "CICDPipelinePOCCI"
 UNIT_TEST_TARGET = "CICDPipelinePOCTests"
 SIMULATOR_DEVICE = ENV.fetch("SIMULATOR_DEVICE", "iPhone 16e")
 SIMULATOR_OS = ENV.fetch("SIMULATOR_OS", "").strip
+XCODE_DEVELOPER_DIR = ENV.fetch(
+  "DEVELOPER_DIR",
+  "/Applications/Xcode_26.3.app/Contents/Developer"
+)
+XCODE_APP_PATH = XCODE_DEVELOPER_DIR.delete_suffix("/Contents/Developer")
+XCODEBUILD_PATH = File.join(XCODE_DEVELOPER_DIR, "usr/bin/xcodebuild")
 
 
 def ci_metadata_xcargs
@@ -27,13 +33,22 @@ end
 platform :ios do
   desc "Run unit tests only with code coverage"
   lane :test do
+    xcode_select(XCODE_APP_PATH)
+
     test_device = if SIMULATOR_OS.empty?
                     SIMULATOR_DEVICE
                   else
                     "#{SIMULATOR_DEVICE} (#{SIMULATOR_OS})"
                   end
 
-    run_tests(
+    xcodebuild_command = [
+      "env",
+      "DEVELOPER_DIR=#{Shellwords.escape(XCODE_DEVELOPER_DIR)}",
+      "NSUnbufferedIO=YES",
+      Shellwords.escape(XCODEBUILD_PATH)
+    ].join(" ")
+
+    test_options = {
       project: PROJECT,
       scheme: CI_TEST_SCHEME,
       devices: [test_device],
@@ -43,14 +58,21 @@ platform :ios do
       code_coverage: true,
       result_bundle: true,
       output_directory: "fastlane/test_output",
+      buildlog_path: "fastlane/test_output/buildlogs",
       output_types: "junit,html",
       output_files: "junit.xml,report.html",
+      xcodebuild_command: xcodebuild_command,
       xcargs: ci_metadata_xcargs
-    )
+    }
+    test_options[:sdk] = "iphonesimulator#{SIMULATOR_OS}" unless SIMULATOR_OS.empty?
+
+    run_tests(**test_options)
   end
 
   desc "Build, sign, and upload the app to TestFlight"
   lane :beta do
+    xcode_select(XCODE_APP_PATH)
+
     app_identifier = ENV.fetch("APP_IDENTIFIER")
     team_id = ENV.fetch("APPLE_TEAM_ID")
     profile_name = ENV.fetch("PROVISIONING_PROFILE_NAME")

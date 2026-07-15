@@ -7,6 +7,8 @@ PROJECT = "CICDPipelinePOC.xcodeproj"
 APP_SCHEME = "CICDPipelinePOC"
 CI_TEST_SCHEME = "CICDPipelinePOCCI"
 UNIT_TEST_TARGET = "CICDPipelinePOCTests"
+SIMULATOR_DEVICE = ENV.fetch("SIMULATOR_DEVICE", "iPhone 17")
+SIMULATOR_OS = ENV.fetch("SIMULATOR_OS", "").strip
 
 
 def ci_metadata_xcargs
@@ -25,10 +27,17 @@ end
 platform :ios do
   desc "Run unit tests only with code coverage"
   lane :test do
+    test_device = if SIMULATOR_OS.empty?
+                    SIMULATOR_DEVICE
+                  else
+                    "#{SIMULATOR_DEVICE} (#{SIMULATOR_OS})"
+                  end
+
     run_tests(
       project: PROJECT,
       scheme: CI_TEST_SCHEME,
-      devices: ["iPhone 17"],
+      devices: [test_device],
+      ensure_devices_found: true,
       clean: true,
       only_testing: [UNIT_TEST_TARGET],
       code_coverage: true,

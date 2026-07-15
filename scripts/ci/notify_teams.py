@@ -10,10 +10,12 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 
 SUCCESS_STATUSES = {"success", "passed", "pass", "succeeded", "completed"}
 CANCELLED_STATUSES = {"cancelled", "canceled", "skipped"}
+EASTERN_TIME_ZONE = ZoneInfo("America/New_York")
 
 
 def env(name: str, default: str = "") -> str:
@@ -53,6 +55,25 @@ def load_event_payload() -> dict[str, Any]:
         return {}
 
     return payload if isinstance(payload, dict) else {}
+
+
+def format_eastern_timestamp(value: str) -> str:
+    source = value.strip()
+    if source:
+        try:
+            parsed = datetime.fromisoformat(source.replace("Z", "+00:00"))
+        except ValueError:
+            return source
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+    else:
+        parsed = datetime.now(timezone.utc)
+
+    eastern = parsed.astimezone(EASTERN_TIME_ZONE)
+    date_text = f"{eastern.strftime('%b')} {eastern.day}, {eastern.year}"
+    time_text = eastern.strftime("%I:%M %p").lstrip("0")
+    zone_text = eastern.tzname() or "ET"
+    return f"{date_text} · {time_text} {zone_text}"
 
 
 def metric_column(icon: str, value: str, label: str) -> dict[str, Any]:
@@ -201,6 +222,7 @@ def build_card() -> dict[str, Any]:
     author = env("COMMIT_AUTHOR", env("TRIGGERED_BY", "unknown"))
     actor = env("TRIGGERED_BY", env("GITHUB_ACTOR", author))
     xcode = env("XCODE_VERSION", "unknown")
+    simulator = env("SIMULATOR_DISPLAY", env("SIMULATOR_DEVICE", "unknown"))
     event_name = env("EVENT_NAME", env("GITHUB_EVENT_NAME", "unknown"))
 
     tests = to_int(env("TESTS", "0"))
@@ -244,6 +266,7 @@ def build_card() -> dict[str, Any]:
             fact("Environment", environment),
             fact("Version", f"{version} ({build})"),
             fact("Toolchain", f"Xcode {xcode}"),
+            fact("Simulator", simulator),
         ]
     )
 
@@ -406,11 +429,7 @@ def build_card() -> dict[str, Any]:
             }
         )
 
-    build_date = env("CI_BUILD_DATE")
-    if build_date:
-        timestamp = build_date
-    else:
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    timestamp = format_eastern_timestamp(env("CI_BUILD_DATE"))
 
     body.append(
         {

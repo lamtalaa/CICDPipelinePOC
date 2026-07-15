@@ -190,7 +190,7 @@ jobs:
     needs: quality
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: macos-26
-    timeout-minutes: 35
+    timeout-minutes: 60
     environment:
       name: qa-testflight
 
@@ -248,7 +248,7 @@ jobs:
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
           cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/build_profile.mobileprovision"
 
-      - name: Build and upload with Fastlane
+      - name: Build, upload, and publish What to Test with Fastlane
         env:
           APP_IDENTIFIER: ${{ secrets.APP_IDENTIFIER }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -274,17 +274,18 @@ jobs:
             echo "| Branch | ${{ needs.quality.outputs.branch }} |"
             echo "| Commit | ${{ needs.quality.outputs.commit }} |"
             echo "| Simulator | ${{ needs.quality.outputs.simulator }} |"
+            echo "| What to Test | Published after App Store Connect processing |"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload IPA and release notes
-        if: success()
+        if: always()
         uses: actions/upload-artifact@v6
         with:
           name: CICDPipelinePOC-${{ needs.quality.outputs.build_number }}
           path: |
             build/CICDPipelinePOC.ipa
             build/release_notes.txt
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 14
 
       - name: Notify Teams about TestFlight deployment
@@ -297,6 +298,6 @@ jobs:
           FAILURES: ${{ needs.quality.outputs.failures }}
           COVERAGE: ${{ needs.quality.outputs.coverage }}
           LINT_VIOLATIONS: ${{ needs.quality.outputs.lint_violations }}
-          TESTFLIGHT_STATUS: ${{ job.status == 'success' && 'Uploaded' || 'Failed' }}
+          TESTFLIGHT_STATUS: ${{ job.status == 'success' && 'Uploaded with What to Test' || 'Failed' }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: python3 scripts/ci/notify_teams.py

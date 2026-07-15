@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
-"""Resolve the newest available iOS runtime for the configured simulator."""
+"""Resolve or create the requested iOS simulator on the CI runner."""
 
 from __future__ import annotations
 
 import json
 import os
 import subprocess
+import sys
 from typing import Any
+
+
+DEFAULT_DEVICE = "iPhone 16e"
 
 
 def simctl_json(*arguments: str) -> dict[str, Any]:
@@ -34,18 +38,13 @@ def version_key(version: str) -> tuple[int, ...]:
     return tuple(parts)
 
 
-def main() -> int:
-    target_device = os.environ.get("SIMULATOR_DEVICE", "iPhone 16e").strip()
-    target_device = target_device or "iPhone 16e"
+def available_ios_runtimes() -> list[tuple[tuple[int, ...], str, str]]:
+    payload = simctl_json("runtimes")
+    runtimes = payload.get("runtimes", [])
+    candidates: list[tuple[tuple[int, ...], str, str]] = []
 
-    runtime_payload = simctl_json("runtimes")
-    device_payload = simctl_json("devices", "available")
-    runtimes = runtime_payload.get("runtimes", [])
-    devices_by_runtime = device_payload.get("devices", {})
-
-    candidates: list[tuple[tuple[int, ...], str]] = []
-    if not isinstance(runtimes, list) or not isinstance(devices_by_runtime, dict):
-        return 0
+    if not isinstance(runtimes, list):
+        return candidates
 
     for runtime in runtimes:
         if not isinstance(runtime, dict):
@@ -58,23 +57,102 @@ def main() -> int:
         if runtime.get("isAvailable") is False:
             continue
 
-        runtime_devices = devices_by_runtime.get(identifier, [])
+        candidates.append((version_key(version), version, identifier))
+
+    return sorted(candidates, reverse=True)
+
+
+def existing_device_runtime(target_device: str) -> str:
+    device_payload = simctl_json("devices", "available")
+    devices_by_runtime = device_payload.get("devices", {})
+    if not isinstance(devices_by_runtime, dict):
+        return ""
+
+    candidates: list[tuple[tuple[int, ...], str]] = []
+    for _, version, runtime_identifier in available_ios_runtimes():
+        runtime_devices = devices_by_runtime.get(runtime_identifier, [])
         if not isinstance(runtime_devices, list):
             continue
 
-        device_is_available = any(
+        device_exists = any(
             isinstance(device, dict)
             and device.get("name") == target_device
             and device.get("isAvailable", True) is not False
             for device in runtime_devices
         )
-        if device_is_available:
+        if device_exists:
             candidates.append((version_key(version), version))
 
-    if candidates:
-        print(max(candidates)[1])
+    return max(candidates)[1] if candidates else ""
 
-    return 0
+
+def device_type_identifier(target_device: str) -> str:
+    payload = simctl_json("devicetypes")
+    device_types = payload.get("devicetypes", [])
+    if not isinstance(device_types, list):
+        return ""
+
+    for device_type in device_types:
+        if not isinstance(device_type, dict):
+            continue
+        if str(device_type.get("name", "")) == target_device:
+            return str(device_type.get("identifier", ""))
+
+    return ""
+
+
+def create_simulator(target_device: str, device_type: str) -> str:
+    for _, version, runtime_identifier in available_ios_runtimes():
+        result = subprocess.run(
+            [
+                "xcrun",
+                "simctl",
+                "create",
+                target_device,
+                device_type,
+                runtime_identifier,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            print(
+                f"Created {target_device} simulator with iOS {version}.",
+                file=sys.stderr,
+            )
+            return version
+
+    return ""
+
+
+def main() -> int:
+    target_device = os.environ.get("SIMULATOR_DEVICE", DEFAULT_DEVICE).strip()
+    target_device = target_device or DEFAULT_DEVICE
+
+    runtime = existing_device_runtime(target_device)
+    if runtime:
+        print(runtime)
+        return 0
+
+    device_type = device_type_identifier(target_device)
+    if not device_type:
+        print(
+            f"Simulator device type '{target_device}' is not installed in the selected Xcode.",
+            file=sys.stderr,
+        )
+        return 1
+
+    runtime = create_simulator(target_device, device_type)
+    if runtime:
+        print(runtime)
+        return 0
+
+    print(
+        f"Unable to create '{target_device}' on any installed iOS runtime.",
+        file=sys.stderr,
+    )
+    return 1
 
 
 if __name__ == "__main__":

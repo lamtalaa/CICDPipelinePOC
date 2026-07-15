@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from typing import Any
 
 
@@ -24,15 +25,25 @@ def select_configured_xcode() -> bool:
         capture_output=True,
         text=True,
     )
-    if result.returncode == 0:
-        return True
+    if result.returncode != 0:
+        message = result.stderr.strip() or result.stdout.strip()
+        print(
+            f"Unable to select Xcode at '{developer_dir}': {message}",
+            file=sys.stderr,
+        )
+        return False
 
-    message = result.stderr.strip() or result.stdout.strip()
-    print(
-        f"Unable to select Xcode at '{developer_dir}': {message}",
-        file=sys.stderr,
+    # CoreSimulator can remain bound to the Xcode version selected when the
+    # runner image started. Restart it so the newly selected Xcode reloads its
+    # own supported runtimes and destinations.
+    subprocess.run(
+        ["killall", "-9", "com.apple.CoreSimulator.CoreSimulatorService"],
+        check=False,
+        capture_output=True,
+        text=True,
     )
-    return False
+    time.sleep(2)
+    return True
 
 
 def simctl_json(*arguments: str) -> dict[str, Any]:

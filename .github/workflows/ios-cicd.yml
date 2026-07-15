@@ -58,7 +58,7 @@ jobs:
           BRANCH_NAME="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
           SHORT_SHA="${GITHUB_SHA:0:7}"
           BUILD_DATE="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-          BUILD_NUMBER="${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          BUILD_NUMBER="${GITHUB_RUN_NUMBER}"
           AUTHOR="$(git log -1 --pretty=format:'%an')"
           XCODE_VERSION="$(xcodebuild -version | head -1 | awk '{print $2}')"
           APP_VERSION="$(xcodebuild -project CICDPipelinePOC.xcodeproj -scheme CICDPipelinePOC -showBuildSettings 2>/dev/null | awk '/MARKETING_VERSION/ {print $3; exit}')"

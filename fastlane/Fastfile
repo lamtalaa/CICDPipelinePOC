@@ -48,6 +48,11 @@ platform :ios do
       Shellwords.escape(XCODEBUILD_PATH)
     ].join(" ")
 
+    test_xcargs = [ci_metadata_xcargs]
+    unless SIMULATOR_OS.empty?
+      test_xcargs << "IPHONEOS_DEPLOYMENT_TARGET=#{Shellwords.escape(SIMULATOR_OS)}"
+    end
+
     test_options = {
       project: PROJECT,
       scheme: CI_TEST_SCHEME,
@@ -62,9 +67,13 @@ platform :ios do
       output_types: "junit,html",
       output_files: "junit.xml,report.html",
       xcodebuild_command: xcodebuild_command,
-      xcargs: ci_metadata_xcargs
+      xcargs: test_xcargs.join(" ")
     }
-    test_options[:sdk] = "iphonesimulator#{SIMULATOR_OS}" unless SIMULATOR_OS.empty?
+
+    unless SIMULATOR_OS.empty?
+      test_options[:sdk] = "iphonesimulator#{SIMULATOR_OS}"
+      test_options[:deployment_target_version] = SIMULATOR_OS
+    end
 
     run_tests(**test_options)
   end

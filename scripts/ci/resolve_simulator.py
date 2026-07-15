@@ -35,8 +35,8 @@ def version_key(version: str) -> tuple[int, ...]:
 
 
 def main() -> int:
-    target_device = os.environ.get("SIMULATOR_DEVICE", "iPhone 17").strip()
-    target_device = target_device or "iPhone 17"
+    target_device = os.environ.get("SIMULATOR_DEVICE", "iPhone 16e").strip()
+    target_device = target_device or "iPhone 16e"
 
     runtime_payload = simctl_json("runtimes")
     device_payload = simctl_json("devices", "available")

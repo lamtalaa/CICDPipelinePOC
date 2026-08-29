@@ -1,8 +1,12 @@
-# CICDPipelinePOC
+# iOS CI/CD Pipeline — Installed in Your Repo for $499
 
-A small SwiftUI application demonstrating an end-to-end iOS CI/CD pipeline with GitHub Actions and Fastlane.
+I install this exact pipeline into **your** iOS repository: every pull request gets linted, tested, and coverage-checked automatically, and every merge to `main` ships a signed build straight to TestFlight. No calls, no meetings — the whole job is done async through a pull request you review and merge.
 
-## Pipeline behavior
+**Proof it works:** this repository runs the pipeline on itself. Here is the latest green deploy run on `main`, which built, signed, and uploaded a build to TestFlight: [Run #39 — iOS CI/CD ✅](https://github.com/lamtalaa/CICDPipelinePOC/actions/runs/29436912438)
+
+> Full offer terms, guarantee, and secrets checklist: [OFFER.md](OFFER.md)
+
+## What the pipeline does
 
 ### Pull requests to `main`
 
@@ -20,13 +24,30 @@ A small SwiftUI application demonstrating an end-to-end iOS CI/CD pipeline with 
 After all quality checks pass:
 
 - Uses the `qa-testflight` GitHub environment.
-- Assigns a unique build number using `run_number.run_attempt`.
+- Assigns a unique build number from the workflow run number.
 - Generates TestFlight “What to Test” notes from the merged PR or commits.
 - Installs temporary signing assets on the hosted runner.
 - Builds and signs the IPA with Fastlane.
 - Uploads the build to TestFlight.
 - Uploads the IPA and release notes as GitHub artifacts.
 - Sends the deployment result to Microsoft Teams.
+
+## How to hire me
+
+**Price: $499 flat.** Async only — no calls. I take one job at a time, so your project gets full attention.
+
+1. **Reach out.** Open an issue on this repo or contact me through one of my listings (see [LISTING.md](LISTING.md)).
+2. **Invite me as a collaborator** on your iOS repository (read/write). Private repos are fine.
+3. **Add your secrets.** You add your Apple signing and App Store Connect secrets to your own repo's Actions settings — I never see or handle your certificates or keys. The exact checklist is in [OFFER.md](OFFER.md).
+4. **I open a pull request** in your repo with the pipeline adapted to your project (scheme, targets, bundle identifier, test setup).
+5. **You review and merge.** The merge to `main` triggers the deploy job, and a signed build lands in your TestFlight.
+6. **You pay** via PayPal: [paypal.me/ylamtalaa](https://paypal.me/ylamtalaa).
+
+**Guarantee:** if a successful GitHub Actions deploy run does not upload a build to your TestFlight after you merge the PR (with valid secrets), you don't pay. Full terms in [OFFER.md](OFFER.md).
+
+**You'll need:** an iOS app that already builds in Xcode, an Apple Developer account, and a GitHub repo. GitHub bills you directly for macOS Actions minutes on private repos.
+
+— Yassine Lamtalaa
 
 ## Repository configuration
 
